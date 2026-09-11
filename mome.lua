@@ -355,7 +355,7 @@ circle.Name = "Circle"
 circle.Parent = prefabs
 circle.BackgroundColor3 = Color3.new(1, 1, 1)
 circle.BackgroundTransparency = 1
-circle.Image = "rbxassetid://266543268"
+circle.Image = "rbxassetid://112527838728403"
 circle.ImageTransparency = 0.5
 
 uiListLayout3.Parent = prefabs

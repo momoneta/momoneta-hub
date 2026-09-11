@@ -1,4 +1,97 @@
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
+-- ============ UI: Elerium v2 (estilo Silence, adaptador Rayfield) ============
+local GUI_LIB_URL = "https://raw.githubusercontent.com/momoneta/momoneta-hub/refs/heads/main/mome.lua"
+-- PEGA AQUI TU LINK raw DE GitHub CUANDO SUBAS elerium-momoneta.luau
+local library = loadstring(game:HttpGet(GUI_LIB_URL, true))()
+local _eleriumWindow = library:AddWindow("La momoneta Hub", {
+	main_color = Color3.fromRGB(0, 0, 139),
+	min_size = Vector2.new(500, 620),
+	can_resize = true,
+})
+local Rayfield = {}
+function Rayfield:CreateWindow(_config)
+	local Window = {}
+	function Window:CreateTab(opt)
+		local name = type(opt) == "table" and (opt.name or opt.Name or "Tab") or tostring(opt)
+		local tab = _eleriumWindow:AddTab(name)
+		local T = {}
+		function T:CreateToggle(opt2)
+			local state = false
+			local busy = false
+			local sw = tab:AddSwitch(opt2.Name, function(v)
+				if busy then return end
+				state = v and true or false
+				pcall(opt2.Callback, state)
+			end)
+			if opt2.CurrentValue == true then
+				sw:Set(true)
+			end
+			return {
+				Set = function(_, v)
+					v = (v == true)
+					if state == v then return end
+					busy = true
+					sw:Set(v)
+					busy = false
+					state = v
+					pcall(opt2.Callback, v)
+				end,
+				Get = function() return state end,
+			}
+		end
+		function T:CreateDropdown(opt2)
+			local dd = tab:AddDropdown(opt2.Name, function(sel)
+				pcall(opt2.Callback, sel)
+			end)
+			if type(opt2.Options) == "table" then
+				for _, op in ipairs(opt2.Options) do
+					pcall(function() dd:Add(op) end)
+				end
+			end
+			return dd
+		end
+		function T:CreateSlider(opt2)
+			local range = opt2.Range or { 1, 100 }
+			local sl = tab:AddSlider(opt2.Name, function(v)
+				pcall(opt2.Callback, v)
+			end, { min = range[1], max = range[2] })
+			return sl
+		end
+		function T:CreateButton(opt2)
+			return tab:AddButton(opt2.Name, function()
+				pcall(opt2.Callback)
+			end)
+		end
+		function T:CreateText(opt2)
+			local label = tab:AddLabel(opt2.Name or "")
+			if opt2.Description then
+				label.Text = tostring(opt2.Name or "") .. "\n" .. tostring(opt2.Description)
+			end
+			return {
+				Set = function(_, t)
+					label.Text = tostring(t)
+				end,
+			}
+		end
+		function T:CreateDivider(opt2)
+			if type(opt2) == "table" then
+				tab:AddLabel(tostring(opt2.text or opt2.Text or ""))
+			else
+				tab:AddLabel(tostring(opt2 or ""))
+			end
+		end
+		return T
+	end
+	function Window:Notify(opt2)
+		pcall(function()
+			game:GetService("StarterGui"):SetCore("SendNotification", {
+				Title = tostring(opt2.Title or "Hub"),
+				Text = tostring(opt2.Content or opt2.Text or ""),
+				Duration = tonumber(opt2.Duration) or 3,
+			})
+		end)
+	end
+	return Window
+end
 
 local Window = Rayfield:CreateWindow({
 	Name = "La momoneta Hub",
@@ -376,12 +469,24 @@ local FastFarm = {
 }
 FastFarm.UpdateStrengthFramesControl = function() end
 local protectBossRareOn = true
+-- Cache de ProfileId de boss rare ya vistas: si el atributo BossRewardDisplayName
+-- tarda en replicar o se pierde tras rebirth/respawn, seguimos protegiendo por id.
+local knownBossRareIds = {}
 local function isBossRara(pet)
 	if not protectBossRareOn then return false end
 	if not pet then return false end
+	local okId, pid = pcall(function() return pet:GetAttribute("ProfileId") end)
+	if okId and type(pid) == "string" and knownBossRareIds[pid] then return true end
 	local ok, mark = pcall(function() return pet:GetAttribute("BossRewardDisplayName") end)
-	if ok and mark ~= nil then return true end
-	return tostring(pet.Name or "") == "Rare Boss Pet"
+	if ok and mark ~= nil then
+		if okId and type(pid) == "string" then knownBossRareIds[pid] = true end
+		return true
+	end
+	if tostring(pet.Name or "") == "Rare Boss Pet" then
+		if okId and type(pid) == "string" then knownBossRareIds[pid] = true end
+		return true
+	end
+	return false
 end
 local function isProtegida(pet)
 	return isBossRara(pet)
@@ -393,7 +498,7 @@ function FastFarm:ProtectedEquippedCount()
 		for _, slot in ipairs(eq:GetChildren()) do
 			local ref = slot:FindFirstChild("petReference")
 			local pet = (ref and ref:IsA("ObjectValue") and ref.Value) or (slot:IsA("ObjectValue") and slot.Value) or nil
-			if pet and pet:IsA("StringValue") and isBossRara(pet) then
+			if pet and pet:IsA("StringValue") and isProtegida(pet) then
 				n = n + 1
 			end
 		end
@@ -985,7 +1090,7 @@ FastFarm.generation = 0
 			local reference = (slot:FindFirstChild("petReference") or slot)
 			local pet = reference and reference:IsA("ObjectValue") and reference.Value
 			if pet then
-				pcall(function() if not isBossRara(pet) then remote:FireServer("unequipPet", pet) end end)
+				pcall(function() if not isProtegida(pet) then remote:FireServer("unequipPet", pet) end end)
 			end
 		end
 		RunService.Heartbeat:Wait()
@@ -994,7 +1099,9 @@ FastFarm.generation = 0
 			local remaining = 0
 			for _, slot in ipairs(equippedPets:GetChildren()) do
 				local reference = (slot:FindFirstChild("petReference") or slot)
-				if reference and reference:IsA("ObjectValue") and reference.Value then
+				local pet = reference and reference:IsA("ObjectValue") and reference.Value or nil
+				-- Las boss rare protegidas DEBEN quedarse equipadas: no cuentan como "remaining"
+				if pet and not isProtegida(pet) then
 					remaining = remaining + 1
 				end
 			end
@@ -1179,6 +1286,35 @@ FastFarm.generation = 0
 			sCount = sCount + part.count
 			rep = rep + (tonumber(part.data.repSpeed) or 0) * part.count
 		end
+if sCount == 0 then
+			local pool = {}
+			local inv = LP:FindFirstChild('petsFolder')
+			if inv then
+				for _, cat in ipairs(inv:GetChildren()) do
+					if cat:IsA('Folder') then
+						for _, pet in ipairs(cat:GetChildren()) do
+							if pet:IsA('StringValue') and not isProtegida(pet) then
+								local perks = pet:FindFirstChild('perksFolder')
+								local st = perks and perks:FindFirstChild('strength')
+								local score = tonumber(st and st.Value) or 0
+								if score > 0 then pool[#pool + 1] = { pet = pet, name = pet.Name, score = score } end
+							end
+						end
+					end
+				end
+			end
+			table.sort(pool, function(a, b) return a.score > b.score end)
+			local groups, order = {}, {}
+			for i = 1, math.min(cap, #pool) do
+				local p = pool[i]
+				if not groups[p.name] then groups[p.name] = { name = p.name, count = 0 } order[#order + 1] = groups[p.name] end
+				groups[p.name].count = groups[p.name].count + 1
+			end
+			s = order
+			for _, part in ipairs(s) do
+				sCount = sCount + part.count
+			end
+		end
 		self.strengthSetup, self.rebirthSetup = s, r
 		self.strengthPack, self.rebirthPack = "s:" .. self.packMode, "r:" .. self.packMode
 		self.strengthPackCount, self.rebirthPackCount = sCount, rCount
@@ -1215,6 +1351,10 @@ FastFarm.generation = 0
 			return a:GetFullName() < b:GetFullName()
 		end)
 		local target = math.min(requestedCount or FastFarm:GetPetSlotCapacity(), FastFarm:GetPetSlotCapacity(), #pets)
+		-- Nunca exceder los slots libres (capacidad - boss rare protegidas).
+		-- Sin esto el servidor saca pets solas al superar el limite y parece que
+		-- "se desequipa en unos minutos".
+		target = math.min(target, math.max(1, FastFarm:FreePetSlots()))
 		FastFarm.requiredPackCount = math.max(1, target)
 		if target < 1 then
 			FastFarm.lastError = "No se encontró el pack " .. tostring(name)
@@ -1297,7 +1437,7 @@ FastFarm.generation = 0
 				local reference = (slot:FindFirstChild("petReference") or slot)
 				local pet = reference and reference:IsA("ObjectValue") and reference.Value
 				if pet then
-					if not isBossRara(pet) then occupied = occupied + 1 end
+					if not isProtegida(pet) then occupied = occupied + 1 end
 					if slot:IsA("ObjectValue") and slot.Value and selected[pet]
 						and pet.Parent and not seen[pet] then
 						seen[pet] = true
@@ -1314,7 +1454,7 @@ FastFarm.generation = 0
 			local reference = (slot:FindFirstChild("petReference") or slot)
 			local pet = reference and reference:IsA("ObjectValue") and reference.Value
 			if pet then
-				if not isBossRara(pet) then occupied = occupied + 1 end
+				if not isProtegida(pet) then occupied = occupied + 1 end
 				if pet.Name == name then matching = matching + 1 end
 			end
 		end
@@ -1337,7 +1477,7 @@ FastFarm.generation = 0
 		for _, slot in ipairs(equippedPets:GetChildren()) do
 			local reference = (slot:FindFirstChild("petReference") or slot)
 			local pet = reference and reference:IsA("ObjectValue") and reference.Value
-			if pet then pcall(function() if not isBossRara(pet) then remote:FireServer("unequipPet", pet) end end) end
+			if pet then pcall(function() if not isProtegida(pet) then remote:FireServer("unequipPet", pet) end end) end
 		end
 		for index = 1, target do
 			pcall(remote.FireServer, remote, "equipPet", targets[index])
@@ -1412,7 +1552,7 @@ FastFarm.generation = 0
 				local ref = (slot:FindFirstChild("petReference") or slot)
 				local pet = ref and ref:IsA("ObjectValue") and ref.Value
 				if pet then
-					if not isBossRara(pet) then used = used + 1 end
+					if not isProtegida(pet) then used = used + 1 end
 					if slot:IsA("ObjectValue") and slot.Value and selected[pet] and pet.Parent and not seen[pet] then
 						seen[pet], count = true, count + 1
 					end
@@ -1430,7 +1570,7 @@ FastFarm.generation = 0
 			for _, slot in ipairs(equipped:GetChildren()) do
 				local ref = (slot:FindFirstChild("petReference") or slot)
 				local pet = ref and ref:IsA("ObjectValue") and ref.Value
-				if pet then pcall(function() if not isBossRara(pet) then remote:FireServer("unequipPet", pet) end end) end
+				if pet then pcall(function() if not isProtegida(pet) then remote:FireServer("unequipPet", pet) end end) end
 			end
 			for _, pet in ipairs(targets) do pcall(remote.FireServer, remote, "equipPet", pet) end
 			local deadline = time() + math.max(1.4, (FastFarm.cachedPing or 0) / 250)
@@ -2115,7 +2255,7 @@ FastFarm.generation = 0
 			local ref = (slot:FindFirstChild("petReference") or slot)
 			local pet = ref and ref:IsA("ObjectValue") and ref.Value
 			if pet then
-				if not isBossRara(pet) then occupied = occupied + 1 end
+				if not isProtegida(pet) then occupied = occupied + 1 end
 				if slot:IsA("ObjectValue") and slot.Value and pack.references[pet]
 					and pet.Parent and not seen[pet] then
 					seen[pet], count = true, count + 1
@@ -2182,7 +2322,7 @@ FastFarm.generation = 0
 			for _, slot in ipairs(eq:GetChildren()) do
 				local ref = slot:FindFirstChild("petReference")
 				local pet = (ref and ref:IsA("ObjectValue") and ref.Value) or (slot:IsA("ObjectValue") and slot.Value) or nil
-				if pet and pet:IsA("StringValue") and not isBossRara(pet) then
+				if pet and pet:IsA("StringValue") and not isProtegida(pet) then
 					names[#names + 1] = pet.Name
 				end
 			end
@@ -2690,6 +2830,27 @@ end
 FarmTab:CreateDivider({text="Rebirth / Strength Rapido"})
 local ffStrengthToggle = nil
 local ffRebirthToggle = nil
+FarmTab:CreateDropdown({
+	Name = "Pack",
+	Options = { "Auto", "Ultra Titanes", "Senores del Caos" },
+	CurrentOption = "Auto",
+	Callback = function(o)
+		if o == "Ultra Titanes" then
+			FastFarm.packMode = "ultra"
+		elseif o == "Senores del Caos" then
+			FastFarm.packMode = "chaos"
+		else
+			FastFarm.packMode = nil
+		end
+		local m = FastFarm.mode
+		if m then
+			FastFarm:Stop(true)
+			if not FastFarm:Start(m) then
+				Window:Notify({Title="La momoneta Hub", Content=tostring(FastFarm.lastError or "Sin pack"), Duration=3})
+			end
+		end
+	end
+})
 ffRebirthToggle = FarmTab:CreateToggle({
 	Name = "Fast Rebirth",
 	CurrentValue = false,
@@ -2711,6 +2872,97 @@ ffRebirthToggle = FarmTab:CreateToggle({
 		end
 	end
 })
+FarmTab:CreateDivider({text="Calculadora"})
+local ffStatusLabel = FarmTab:CreateText({Name="Estado: detenido"})
+local ffPackLabel = FarmTab:CreateText({Name="Pack: -"})
+local ffTimeLabel = FarmTab:CreateText({Name="Tiempo: 0d 0h 0m 0s"})
+local ffCalcLabel = FarmTab:CreateText({Name="Calculadora: 0/h  •  0/d  •  0/w"})
+local ffStrengthCounterLabel = FarmTab:CreateText({Name="Strength: 0"})
+local ffRebirthCounterLabel = FarmTab:CreateText({Name="Rebirths: 0"})
+local function ffElapsedText(seconds)
+	seconds = math.max(0, math.floor(seconds or 0))
+	local days = math.floor(seconds / 86400)
+	local hours = math.floor((seconds % 86400) / 3600)
+	local minutes = math.floor((seconds % 3600) / 60)
+	local secs = seconds % 60
+	return string.format("%dd %dh %dm %ds", days, hours, minutes, secs)
+end
+local ffSession = { key = nil, startedAt = 0, startStrength = 0, startRebirths = 0, samples = {}, lastValue = nil, lastAt = 0 }
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		local ok = pcall(function()
+			local stats = FastFarm:ReadStats()
+			local key = FastFarm.mode or (superRepOn and "super") or (fastRepOn and "fast") or nil
+			if key ~= ffSession.key then
+				ffSession.key = key
+				ffSession.startedAt = os.clock()
+				ffSession.startStrength = stats.strength
+				ffSession.startRebirths = stats.rebirths
+				ffSession.samples = {}
+				ffSession.lastValue = stats.strength
+				ffSession.lastAt = os.clock()
+			end
+			local strengthGain = 0
+			local rebirthGain = 0
+			if ffSession.key then
+				if ffSession.key == "rebirth" then
+					strengthGain = math.max(0, FastFarm.cycleStrengthGain or 0)
+					rebirthGain = math.max(0, stats.rebirths - ffSession.startRebirths)
+				else
+					strengthGain = math.max(0, stats.strength - ffSession.startStrength)
+					rebirthGain = math.max(0, stats.rebirths - ffSession.startRebirths)
+				end
+				-- muestras de fuerza para el ritmo (sirve a strength, super y fast)
+				local now = os.clock()
+				if stats.strength > (ffSession.lastValue or stats.strength) then
+					local dur = math.max(0.05, now - (ffSession.lastAt or now))
+					if dur <= 30 then
+						ffSession.samples[#ffSession.samples + 1] = { duration = dur, delta = stats.strength - (ffSession.lastValue or stats.strength), at = now }
+						if #ffSession.samples > 12 then table.remove(ffSession.samples, 1) end
+					end
+				end
+				ffSession.lastValue = stats.strength
+				ffSession.lastAt = now
+			end
+			pcall(function() ffStrengthCounterLabel:Set("Strength: " .. formatExact(stats.strength) .. " (+" .. formatExact(strengthGain) .. ")") end)
+			pcall(function() ffRebirthCounterLabel:Set("Rebirths: " .. formatExact(stats.rebirths) .. " (+" .. formatExact(rebirthGain) .. ")") end)
+			if ffSession.key then
+				local elapsed = math.max(0, os.clock() - ffSession.startedAt)
+				local status = ""
+				if FastFarm.pingPaused then status = " (pausado)" end
+				pcall(function() ffTimeLabel:Set("Tiempo: " .. ffElapsedText(elapsed) .. status) end)
+				local rate = nil
+				if ffSession.key == "rebirth" then
+					rate = (tonumber(FastFarm.expectedRebirthDelta) or 0) / CONFIG.FastFarm.RateCycle * 3600
+					if not (rate and rate > 0) then rate = nil end
+				else
+					if #ffSession.samples >= 3 then
+						local totalDur, totalDelta = 0, 0
+						for _, s in ipairs(ffSession.samples) do totalDur = totalDur + s.duration totalDelta = totalDelta + s.delta end
+						if totalDur >= 2 and totalDelta > 0 then rate = totalDelta / totalDur * 3600 end
+					end
+					if rate == nil and elapsed >= 5 and strengthGain > 0 then
+						rate = strengthGain / math.max(1, elapsed) * 3600
+					end
+				end
+				if rate == nil then
+					pcall(function() ffCalcLabel:Set("Calculadora: calibrando...") end)
+				else
+					local perHour = rate
+					local perDay = perHour * 24
+					pcall(function()
+						ffCalcLabel:Set("Calculadora: " .. FastFarm:FormatCompact(perHour) .. "/h  •  " .. FastFarm:FormatCompact(perDay) .. "/d  •  " .. FastFarm:FormatCompact(perHour * 168) .. "/w")
+					end)
+				end
+			else
+				pcall(function() ffTimeLabel:Set("Tiempo: 0d 0h 0m 0s") end)
+				pcall(function() ffCalcLabel:Set("Calculadora: 0/h  •  0/d  •  0/w") end)
+			end
+		end)
+		if not ok then task.wait(1) end
+	end
+end)
 local function ffDragonBusy()
 	if FastFarm.mode ~= 'rebirth' then return false end
 	local ph = FastFarm.phase
@@ -2747,7 +2999,7 @@ end)
 task.spawn(function()
 	while true do
 		task.wait(1)
-		if ffStatusLabel and ffStatusLabel.Parent then
+		if ffStatusLabel then
 			if FastFarm.mode == "strength" then
 				pcall(function()
 					ffStatusLabel:Set("Estado: farmeando fuerza")
@@ -2768,9 +3020,9 @@ task.spawn(function()
 	end
 end)
 
--- ============ PROTECCION BOSS RARE ============
-FarmTab:CreateDivider({text="Proteccion Boss Rare"})
-bossRareStatusLabel = FarmTab:CreateText({Name="Protegidas: 0 boss rare"})
+-- ============ PROTECCION BOSS RARE (solo boss rare, sin golem) ============
+FarmTab:CreateDivider({text="Proteccion Pets"})
+bossRareStatusLabel = FarmTab:CreateText({Name="Equipadas: 0 boss rare"})
 local function rbCountBossRaras()
 	local n = 0
 	local folder = LocalPlayer:FindFirstChild("petsFolder")
@@ -2778,8 +3030,7 @@ local function rbCountBossRaras()
 		for _, cat in ipairs(folder:GetChildren()) do
 			if cat:IsA("Folder") then
 				for _, pet in ipairs(cat:GetChildren()) do
-					local ok, mark = pcall(function() return pet:GetAttribute("BossRewardDisplayName") end)
-					if pet:IsA("StringValue") and (tostring(pet.Name) == "Rare Boss Pet" or (ok and mark ~= nil)) then
+					if pet:IsA("StringValue") and isBossRara(pet) then
 						n = n + 1
 					end
 				end
@@ -2788,24 +3039,95 @@ local function rbCountBossRaras()
 	end
 	return n
 end
+local function rbCountBossRarasEquipped()
+	local n = 0
+	local eq = LocalPlayer:FindFirstChild("equippedPets")
+	if eq then
+		for _, slot in ipairs(eq:GetChildren()) do
+			local ref = slot:FindFirstChild("petReference") or slot
+			local pet = ref and ref:IsA("ObjectValue") and ref.Value or nil
+			if pet and pet:IsA("StringValue") and isBossRara(pet) then
+				n = n + 1
+			end
+		end
+	end
+	return n
+end
+local function refreshProtLabel()
+	local eq = rbCountBossRarasEquipped()
+	pcall(function() bossRareStatusLabel:Set('Equipadas: ' .. tostring(eq) .. ' boss rare') end)
+	return eq
+end
+
 FarmTab:CreateToggle({
 	Name = "No desequipar boss rare",
 	CurrentValue = true,
 	Flag = "ProtectBossRare",
 	Callback = function(v)
 		protectBossRareOn = v
-		pcall(function() bossRareStatusLabel:Set("Protegidas: " .. tostring(rbCountBossRaras()) .. " boss rare") end)
+		refreshProtLabel()
 		Window:Notify({Title="La momoneta Hub", Content=v and "Boss rare protegidas" or "Boss rare sin proteccion", Duration=2})
 	end
 })
 FarmTab:CreateButton({
-	Name = "Contar boss rare",
+	Name = "Contar equipadas",
 	Callback = function()
-		local b = rbCountBossRaras()
-		pcall(function() bossRareStatusLabel:Set("Protegidas: " .. tostring(b) .. " boss rare") end)
-		Window:Notify({Title="La momoneta Hub", Content="Boss rare: " .. tostring(b), Duration=2})
+		local eq = refreshProtLabel()
+		Window:Notify({Title="La momoneta Hub", Content="Boss rare equipadas: " .. tostring(eq), Duration=2})
 	end
 })
+
+-- Guardian: si el servidor/juego saca una boss rare (limite de slots, muerte,
+-- rebirth, cambio de pj), la re-equipa sola sin tocar el pack de farmeo.
+task.spawn(function()
+	local remote = nil
+	while true do
+		task.wait(5)
+		if not protectBossRareOn then continue end
+		if remote == nil then
+			local ev = ReplicatedStorage:FindFirstChild("rEvents")
+			remote = ev and ev:FindFirstChild("equipPetEvent") or nil
+		end
+		local petsFolder = LocalPlayer:FindFirstChild("petsFolder")
+		local equippedPets = LocalPlayer:FindFirstChild("equippedPets")
+		if remote == nil or petsFolder == nil or equippedPets == nil then continue end
+		-- junta boss rare no equipadas
+		local equippedSet = {}
+		for _, slot in ipairs(equippedPets:GetChildren()) do
+			local ref = slot:FindFirstChild("petReference") or slot
+			local pet = ref and ref:IsA("ObjectValue") and ref.Value or nil
+			if pet then equippedSet[pet] = true end
+		end
+		local missing = {}
+		for _, cat in ipairs(petsFolder:GetChildren()) do
+			if cat:IsA("Folder") then
+				for _, pet in ipairs(cat:GetChildren()) do
+					if pet:IsA("StringValue") and isBossRara(pet) and not equippedSet[pet] then
+						missing[#missing + 1] = pet
+					end
+				end
+			end
+		end
+		if #missing == 0 then
+			refreshProtLabel()
+			continue
+		end
+		-- solo re-equipa si hay slot libre real; jamas saca otras para hacer hueco
+		local cap = 0
+		pcall(function() cap = FastFarm:GetPetSlotCapacity() end)
+		local used = #equippedPets:GetChildren()
+		local free = math.max(0, (tonumber(cap) or used) - used)
+		if free < 1 then continue end
+		table.sort(missing, function(a, b)
+			return (tonumber(a:GetAttribute("MomentumSeconds")) or 0) > (tonumber(b:GetAttribute("MomentumSeconds")) or 0)
+		end)
+		for i = 1, math.min(free, #missing) do
+			pcall(remote.FireServer, remote, "equipPet", missing[i])
+			task.wait(0.15)
+		end
+		refreshProtLabel()
+	end
+end)
 
 
 -- ============ BOSS (reemplazo Young0x ) ============
@@ -3007,6 +3329,11 @@ end
 
 function Boss:BeginBattle(boss)
 	if self.engagedBoss == boss then return true end
+		if not fastPunch then
+			self.status = 'Activa Fast Punch para el boss'
+			self:UpdateUi()
+			return false
+		end
 	local c, root = self:WaitReady(8)
 	if not c or not root or boss.Parent == nil or Workspace:GetAttribute("BossActive") ~= true then
 		self:RestoreBattle()
@@ -3108,6 +3435,11 @@ function Boss:Fight(boss)
 	local lastHealth = bossHealth()
 	local lastAttack = 0
 	while self.active and boss.Parent and Workspace:GetAttribute("BossActive") == true do
+		if not fastPunch then
+			self.status = 'Punch desactivado'
+			self:UpdateUi()
+			break
+		end
 		local curBoss, part, target = findBoss()
 		if curBoss ~= boss or not part or not target then break end
 		local c = LocalPlayer.Character
@@ -3191,6 +3523,15 @@ function Boss:Set(enabled)
 		self:UpdateUi()
 		return false
 	end
+	local strStat = getPlayerStat(LocalPlayer, { 'Strength' })
+	local strVal = strStat and tonumber(strStat.Value) or 0
+	if strVal <= 0 then
+		self.active = false
+		self.status = 'Consegui fuerza primero (tenes 0)'
+		self:SetAntiLag(false)
+		self:UpdateUi()
+		return false
+	end
 	self:SetAntiLag(bossAntiLagOn == true)
 	self.hitInterval = math.max(0.31, (tonumber(values.MIN_HIT_INTERVAL) or 0.3) + 0.01)
 	bossThread = task.spawn(function()
@@ -3211,7 +3552,7 @@ function Boss:Set(enabled)
 	return true
 end
 
-FarmTab:CreateDivider({text="Boss (Young0x)"})
+FarmTab:CreateDivider({text="Boss Hit"})
 bossStatusLabel = FarmTab:CreateText({Name="Estado: Sin boss activo"})
 bossHealthLabel = FarmTab:CreateText({Name="Vida: --"})
 bossToggle = FarmTab:CreateToggle({
@@ -3464,6 +3805,27 @@ ShopTab:CreateButton({
 -- ============ MISC ============
 local MiscTab = Window:CreateTab({ name = "Misc" })
 
+-- Anti Lag
+local antiLagOn = false
+local lagSaved = {}
+local function setAntiLag(on)
+	antiLagOn = on
+	if on then
+		if next(lagSaved) == nil then
+			lagSaved = { GlobalShadows = Lighting.GlobalShadows, FogEnd = Lighting.FogEnd, Brightness = Lighting.Brightness }
+		end
+		Lighting.GlobalShadows = false
+		Lighting.FogEnd = 1000000000
+		Lighting.Brightness = 0
+		pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+	else
+		if next(lagSaved) ~= nil then
+			for k, v in pairs(lagSaved) do pcall(function() Lighting[k] = v end) end
+		end
+	end
+end
+MiscTab:CreateToggle({ Name="Anti Lag", CurrentValue=false, Flag="AntiLag", Callback=function(v) setAntiLag(v) end })
+
 -- Fly
 local flyOn = false
 local flyGyro, flyVel = nil, nil
@@ -3561,6 +3923,117 @@ local function setWalkWater(on)
 end
 MiscTab:CreateToggle({ Name="Walk on Water", CurrentValue=false, Flag="WalkWater", Callback=function(v) setWalkWater(v) end })
 
+-- No Clip
+local noclipOn = false
+local savedCollide = {}
+local function setNoclip(on)
+	noclipOn = on
+	local c = LocalPlayer.Character
+	if not on then
+		for part, orig in pairs(savedCollide) do
+			if part and part.Parent then part.CanCollide = orig end
+		end
+		table.clear(savedCollide)
+		return
+	end
+	if c then
+		for _, part in ipairs(c:GetDescendants()) do
+			if part:IsA("BasePart") then
+				if savedCollide[part] == nil then savedCollide[part] = part.CanCollide end
+				part.CanCollide = false
+			end
+		end
+	end
+end
+MiscTab:CreateToggle({ Name="No Clip", CurrentValue=false, Flag="Noclip", Callback=function(v) setNoclip(v) end })
+
+-- Anti Knockback
+local antiKbOn = false
+local kbVel = nil
+MiscTab:CreateToggle({ Name="Anti Knockback", CurrentValue=false, Flag="AntiKb", Callback=function(v)
+	antiKbOn = v
+	if not v then
+		if kbVel then kbVel:Destroy() kbVel=nil end
+		return
+	end
+	local c = LocalPlayer.Character
+	local hrp = c and c:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	kbVel = Instance.new("BodyVelocity")
+	kbVel.P = 25000
+	kbVel.MaxForce = Vector3.new(1000000000, 0, 1000000000)
+	kbVel.Parent = hrp
+end })
+
+-- Spin
+local spinOn = false
+local spinPart = nil
+local spinAutoRotate = nil
+MiscTab:CreateToggle({ Name="Spin", CurrentValue=false, Flag="Spin", Callback=function(v)
+	spinOn = v
+	if not v then
+		if spinPart then spinPart:Destroy() spinPart=nil end
+		local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+		if h and spinAutoRotate ~= nil then h.AutoRotate = spinAutoRotate end
+		return
+	end
+	local c = LocalPlayer.Character
+	local hrp = c and c:FindFirstChild("HumanoidRootPart")
+	local h = c and c:FindFirstChildOfClass("Humanoid")
+	if not hrp then return end
+	spinAutoRotate = h and h.AutoRotate
+	if h then h.AutoRotate = false end
+	spinPart = Instance.new("BodyAngularVelocity")
+	spinPart.AngularVelocity = Vector3.new(0,7,0)
+	spinPart.MaxTorque = Vector3.new(0,9000000000,0)
+	spinPart.P = 6000
+	spinPart.Parent = hrp
+end })
+
+-- Infinite Jump
+local infJumpOn = false
+UserInputService.JumpRequest:Connect(function()
+	if infJumpOn then
+		local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+		if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+	end
+end)
+MiscTab:CreateToggle({ Name="Infinite Jump", CurrentValue=false, Flag="InfiniteJump", Callback=function(v) infJumpOn=v end })
+
+-- FullBright
+local fullBrightOn = false
+local fbSaved = {}
+MiscTab:CreateToggle({ Name="FullBright", CurrentValue=false, Flag="FullBright", Callback=function(v)
+	fullBrightOn = v
+	if v then
+		if next(fbSaved)==nil then fbSaved = {ClockTime=Lighting.ClockTime, Brightness=Lighting.Brightness, Ambient=Lighting.Ambient, OutdoorAmbient=Lighting.OutdoorAmbient, GlobalShadows=Lighting.GlobalShadows} end
+		Lighting.ClockTime = 14
+		Lighting.Brightness = 3
+		Lighting.Ambient = Color3.fromRGB(178,178,178)
+		Lighting.OutdoorAmbient = Color3.fromRGB(178,178,178)
+		Lighting.GlobalShadows = false
+	else
+		if next(fbSaved)~=nil then
+			for k,val in pairs(fbSaved) do pcall(function() Lighting[k]=val end) end
+		end
+	end
+end })
+
+-- No Fog
+local noFogOn = false
+local fogSaved = {}
+MiscTab:CreateToggle({ Name="Quitar Niebla", CurrentValue=false, Flag="NoFog", Callback=function(v)
+	noFogOn = v
+	if v then
+		if next(fogSaved)==nil then fogSaved = {FogStart=Lighting.FogStart, FogEnd=Lighting.FogEnd, FogColor=Lighting.FogColor} end
+		Lighting.FogStart = 100000
+		Lighting.FogEnd = 1000000
+	else
+		if next(fogSaved)~=nil then
+			for k,val in pairs(fogSaved) do pcall(function() Lighting[k]=val end) end
+		end
+	end
+end })
 
 -- FOV
 local fovVal = 70
@@ -3580,6 +4053,126 @@ end
 MiscTab:CreateSlider({ Name="FOV", Range={40,120}, Increment=1, CurrentValue=70, Flag="FOV", Callback=function(v) fovVal=v if fovOn then applyFov() end end })
 MiscTab:CreateToggle({ Name="Aplicar FOV", CurrentValue=false, Flag="FOVToggle", Callback=function(v) fovOn=v applyFov() end })
 
+-- Zoom
+local zoomOn = false
+local savedZoom = nil
+MiscTab:CreateToggle({ Name="Zoom extendido", CurrentValue=false, Flag="Zoom", Callback=function(v)
+	zoomOn = v
+	if v then
+		savedZoom = savedZoom or LocalPlayer.CameraMaxZoomDistance
+		LocalPlayer.CameraMaxZoomDistance = 100000
+	else
+		if savedZoom then LocalPlayer.CameraMaxZoomDistance = savedZoom end
+		savedZoom = nil
+	end
+end })
+
+-- Click TP
+local clickTpOn = false
+UserInputService.InputBegan:Connect(function(input, gpe)
+	if clickTpOn and not gpe and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+		local cam = Workspace.CurrentCamera
+		local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+		if cam and hrp then
+			local ray = cam:ScreenPointToRay(input.Position.X, input.Position.Y)
+			local params = RaycastParams.new()
+			params.FilterDescendantsInstances = {LocalPlayer.Character}
+			params.FilterType = Enum.RaycastFilterType.Exclude
+			params.IgnoreWater = true
+			local hit = Workspace:Raycast(ray.Origin, ray.Direction*100000, params)
+			if hit then
+				hrp.CFrame = CFrame.new(hit.Position + Vector3.new(0, 3, 0))
+				hrp.AssemblyLinearVelocity = Vector3.zero
+				hrp.AssemblyAngularVelocity = Vector3.zero
+			end
+		end
+	end
+end)
+MiscTab:CreateToggle({ Name="Click TP", CurrentValue=false, Flag="ClickTP", Callback=function(v) clickTpOn=v end })
+
+-- Hide Players
+local hidePlayersOn = false
+MiscTab:CreateToggle({ Name="Ocultar Jugadores", CurrentValue=false, Flag="HidePlayers", Callback=function(v)
+	hidePlayersOn = v
+	if not v then
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= LocalPlayer and p.Character then
+				for _, part in ipairs(p.Character:GetDescendants()) do
+					if part:IsA("BasePart") then part.LocalTransparencyModifier = 0 end
+				end
+			end
+		end
+		return
+	end
+	task.spawn(function()
+		while hidePlayersOn do
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p ~= LocalPlayer and p.Character then
+					for _, part in ipairs(p.Character:GetDescendants()) do
+						if part:IsA("BasePart") then part.LocalTransparencyModifier = 1 end
+					end
+				end
+			end
+			task.wait(0.5)
+		end
+	end)
+end })
+
+-- Hide Pets
+local hidePetsOn = false
+local function isPetModel(m)
+	return m:IsA("Model") and m:FindFirstChild("petMovementScript", true) ~= nil
+end
+local function setAllPetsTransparency(val)
+	for _, m in ipairs(Workspace:GetDescendants()) do
+		if isPetModel(m) then
+			for _, part in ipairs(m:GetDescendants()) do
+				if part:IsA("BasePart") then part.LocalTransparencyModifier = val end
+			end
+		end
+	end
+end
+MiscTab:CreateToggle({ Name="Ocultar Pets", CurrentValue=false, Flag="HidePets", Callback=function(v)
+	hidePetsOn = v
+	if not v then setAllPetsTransparency(0) return end
+	task.spawn(function()
+		while hidePetsOn do
+			setAllPetsTransparency(1)
+			task.wait(0.5)
+		end
+	end)
+end })
+
+-- FPS Unlock
+MiscTab:CreateToggle({ Name="FPS Unlock", CurrentValue=false, Flag="FpsUnlock", Callback=function(v)
+	if v then pcall(function() setfpscap(0) end)
+	else pcall(function() setfpscap(60) end) end
+end })
+
+-- Headless
+local headlessOn = false
+MiscTab:CreateToggle({ Name="Headless", CurrentValue=false, Flag="Headless", Callback=function(v)
+	headlessOn = v
+	local c = LocalPlayer.Character
+	if not c then return end
+	local head = c:FindFirstChild("Head")
+	if head then head.LocalTransparencyModifier = v and 1 or 0 end
+end })
+
+-- Day/Night
+MiscTab:CreateDropdown({ Name="Dia/Noche", Options={"Day","Night"}, CurrentOption="Day", Callback=function(o)
+	if o == "Night" then Lighting.ClockTime = 0 else Lighting.ClockTime = 14 end
+end })
+
+-- Fortune Wheel
+local openFortuneWheelRemote = ReplicatedStorage.rEvents:FindFirstChild("openFortuneWheelRemote")
+local fortuneChances = ReplicatedStorage.shared and ReplicatedStorage.shared.catalogs and ReplicatedStorage.shared.catalogs:FindFirstChild("fortuneWheelChances")
+MiscTab:CreateButton({ Name="Girar Fortuna", Callback=function()
+	local wheel = fortuneChances and fortuneChances:FindFirstChild("Fortune Wheel")
+	if openFortuneWheelRemote and wheel then
+		pcall(function() openFortuneWheelRemote:InvokeServer("openFortuneWheel", wheel) end)
+	end
+end })
 
 -- Remove AD Portal
 local removePortalOn = false
@@ -3599,4 +4192,3 @@ end
 MiscTab:CreateToggle({ Name="Quitar Portal AD", CurrentValue=false, Flag="RemovePortal", Callback=function(v) setRemovePortal(v) end })
 
 Window:Notify({Title="La momoneta Hub", Content="Loaded", Duration=4})
-

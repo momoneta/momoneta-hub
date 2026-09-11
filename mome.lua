@@ -188,7 +188,7 @@ base.BackgroundColor3 = Color3.new(0.160784, 0.290196, 0.478431)
 base.BorderSizePixel = 0
 base.Position = UDim2.new(0, 0, 0.800000012, 0)
 base.Size = UDim2.new(1, 0, 0, 10)
-base.Image = "rbxassetid://2851926732"
+base.Image = "rbxassetid://112527838728403"
 base.ImageColor3 = Color3.new(0.160784, 0.290196, 0.478431)
 base.ScaleType = Enum.ScaleType.Slice
 base.SliceCenter = Rect.new(12, 12, 12, 12)
@@ -1031,7 +1031,7 @@ function library:AddWindow(title, options)
 			Window.Draggable = false
 			if options.can_resize then
 				oldIcon = mouse.Icon
-				-- mouse.Icon = "http://www.roblox.com/asset?id=112527838728403"
+				-- mouse.Icon = "http://www.roblox.com/asset?id=4745131330"
 			end
 			Entered = true
 		end)

@@ -176,7 +176,7 @@ toggle.Position = UDim2.new(0, 5, 0, -2)
 toggle.Rotation = 0
 toggle.Size = UDim2.new(0, 20, 0, 20)
 toggle.ZIndex = 2
-toggle.Image = "https://www.roblox.com/Thumbs/Asset.ashx?width=150&height=150&assetId=112527838728403"
+toggle.Image = "https://www.roblox.com/Thumbs/Asset.ashx?width=420&height=420&assetId=136171704230647"
 
 local toggleCorner = Instance.new("UICorner")
 toggleCorner.CornerRadius = UDim.new(0.5, 0)
@@ -1031,7 +1031,7 @@ function library:AddWindow(title, options)
 			Window.Draggable = false
 			if options.can_resize then
 				oldIcon = mouse.Icon
-				-- mouse.Icon = "http://www.roblox.com/asset?id=4745131330"
+				-- mouse.Icon = "http://www.roblox.com/asset?id=112527838728403"
 			end
 			Entered = true
 		end)

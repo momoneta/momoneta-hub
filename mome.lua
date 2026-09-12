@@ -6,7 +6,7 @@
 ]]
 
 local ui_options = {
-	main_color = Color3.fromRGB(0, 255, 0),
+	main_color = Color3.fromRGB(0, 0, 139),
 	min_size = Vector2.new(400, 300),
 	toggle_key = Enum.KeyCode.RightShift,
 	can_resize = true,
@@ -147,7 +147,7 @@ window.ClipsDescendants = true
 window.Position = UDim2.new(0, 20, 0, 20)
 window.Selectable = true
 window.Size = UDim2.new(0, 200, 0, 200)
-window.Image = "rbxassetid://112527838728403"
+window.Image = "rbxassetid://2851926732"
 window.ImageColor3 = Color3.new(0.0823529, 0.0862745, 0.0901961)
 window.ScaleType = Enum.ScaleType.Slice
 window.SliceCenter = Rect.new(12, 12, 12, 12)
@@ -176,7 +176,7 @@ toggle.Position = UDim2.new(0, 5, 0, -2)
 toggle.Rotation = 0
 toggle.Size = UDim2.new(0, 20, 0, 20)
 toggle.ZIndex = 2
-toggle.Image = "https://www.roblox.com/Thumbs/Asset.ashx?width=420&height=420&assetId=136171704230647"
+toggle.Image = "https://www.roblox.com/Thumbs/Asset.ashx?width=420&height=420&assetId=135715855464010"
 
 local toggleCorner = Instance.new("UICorner")
 toggleCorner.CornerRadius = UDim.new(0.5, 0)
@@ -1298,15 +1298,8 @@ function library:AddWindow(title, options)
 						slider_options = {
 							["min"] = slider_options.min or 0,
 							["max"] = slider_options.max or 100,
-							["default"] = slider_options.default,
-							["step"] = slider_options.step or slider_options.increment or 1,
 							["readonly"] = slider_options.readonly or false,
 						}
-						-- Movil: slider mas alto para el dedo
-						local isMobileSlider = UIS.TouchEnabled and not UIS.KeyboardEnabled
-						if isMobileSlider then
-							slider.Size = UDim2.new(1, 0, 0, 34)
-						end
 
 						local slider = prefabs:FindFirstChild("Slider"):Clone()
 
@@ -1322,9 +1315,7 @@ function library:AddWindow(title, options)
 
 						title.Text = slider_text
 
-						do -- Slider Math (PC + movil tactil)
-							local sliderBarH = isMobileSlider and 34 or 20
-							local sliderHeld = false
+						do -- Slider Math
 							local Entered = false
 							slider.MouseEnter:Connect(function()
 								Entered = true
@@ -1332,79 +1323,74 @@ function library:AddWindow(title, options)
 							end)
 							slider.MouseLeave:Connect(function()
 								Entered = false
-								if not sliderHeld then
-									Window.Draggable = true
-								end
+								Window.Draggable = true
 							end)
 
-							local function sliderAlphaFromX(xPos)
-								local absPos = slider.AbsolutePosition.X
-								local absSize = math.max(1, slider.AbsoluteSize.X)
-								return math.clamp((xPos - absPos) / absSize, 0, 1)
-							end
+							local Held = false
+							UIS.InputBegan:Connect(function(inputObject)
+								if inputObject.UserInputType == Enum.UserInputType.MouseButton1 then
+									Held = true
 
-							local function sliderApplyAlpha(alpha)
-								alpha = math.clamp(tonumber(alpha) or 0, 0, 1)
-								local minv = slider_options.min
-								local maxv = slider_options.max
-								local step = tonumber(slider_options.step) or 1
-								local raw = minv + (maxv - minv) * alpha
-								local sel_value
-								if step >= 1 then
-									sel_value = math.floor(raw / step + 0.5) * step
-								else
-									sel_value = math.floor(raw + 0.5)
-								end
-								sel_value = math.clamp(sel_value, minv, maxv)
-								local showAlpha = (maxv == minv) and 0 or ((sel_value - minv) / (maxv - minv))
-								Resize(indicator, {Size = UDim2.new(showAlpha, 0, 0, sliderBarH)}, options.tween_time)
-								value.Text = tostring(sel_value)
-								pcall(callback, sel_value)
-							end
-							slider.ApplyAlpha = sliderApplyAlpha
+									spawn(function() -- Loop check
+										if Entered and not slider_options.readonly then
+											while Held and (not dropdown_open) do
+												local mouse_location = gMouse()
+												local x = (slider.AbsoluteSize.X - (slider.AbsoluteSize.X - ((mouse_location.X - slider.AbsolutePosition.X)) + 1)) / slider.AbsoluteSize.X
 
-							slider.InputBegan:Connect(function(input)
-								if slider_options.readonly then return end
-								local t = input.UserInputType
-								if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
-									sliderHeld = true
-									Window.Draggable = false
-									sliderApplyAlpha(sliderAlphaFromX(input.Position.X))
+												local min = 0
+												local max = 1
+
+												local size = min
+												if x >= min and x <= max then
+													size = x
+												elseif x < min then
+													size = min
+												elseif x > max then
+													size = max
+												end
+
+												Resize(indicator, {Size = UDim2.new(size or min, 0, 0, 20)}, options.tween_time)
+												local p = math.floor((size or min) * 100)
+
+												local maxv = slider_options.max
+												local minv = slider_options.min
+												local diff = maxv - minv
+
+												local sel_value = math.floor(((diff / 100) * p) + minv)
+
+												value.Text = tostring(sel_value)
+												pcall(callback, sel_value)
+
+												RS.Heartbeat:Wait()
+											end
+										end
+									end)
 								end
 							end)
-							UIS.InputChanged:Connect(function(input)
-								if not sliderHeld or slider_options.readonly or dropdown_open then return end
-								local t = input.UserInputType
-								if t == Enum.UserInputType.MouseMovement or t == Enum.UserInputType.Touch then
-									sliderApplyAlpha(sliderAlphaFromX(input.Position.X))
-								end
-							end)
-							UIS.InputEnded:Connect(function(input)
-								local t = input.UserInputType
-								if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
-									sliderHeld = false
-									if not Entered then
-										Window.Draggable = true
-									end
+							UIS.InputEnded:Connect(function(inputObject)
+								if inputObject.UserInputType == Enum.UserInputType.MouseButton1 then
+									Held = false
 								end
 							end)
 
 							function slider_data:Set(new_value)
-								new_value = tonumber(new_value) or slider_options.min
-								local minv = slider_options.min
+								new_value = tonumber(new_value) or 0
+								new_value = (((new_value >= 0 and new_value <= 100) and new_value) / 100)
+
+								Resize(indicator, {Size = UDim2.new(new_value or 0, 0, 0, 20)}, options.tween_time)
+								local p = math.floor((new_value or 0) * 100)
+
 								local maxv = slider_options.max
-								new_value = math.clamp(new_value, minv, maxv)
-								local alpha = (maxv == minv) and 0 or ((new_value - minv) / (maxv - minv))
-								Resize(indicator, {Size = UDim2.new(alpha, 0, 0, sliderBarH)}, options.tween_time)
-								value.Text = tostring(math.floor(new_value + 0.5))
-								pcall(callback, math.floor(new_value + 0.5))
+								local minv = slider_options.min
+								local diff = maxv - minv
+
+								local sel_value = math.floor(((diff / 100) * p) + minv)
+
+								value.Text = tostring(sel_value)
+								pcall(callback, sel_value)
 							end
 
-							if slider_options.default ~= nil then
-								slider_data:Set(slider_options.default)
-							else
-								slider_data:Set(slider_options["min"])
-							end
+							slider_data:Set(slider_options["min"])
 						end
 
 						return slider_data, slider

@@ -51,9 +51,17 @@ function Rayfield:CreateWindow(_config)
 		end
 		function T:CreateSlider(opt2)
 			local range = opt2.Range or { 1, 100 }
+			local inc = tonumber(opt2.Increment) or 1
+			local defVal = tonumber(opt2.CurrentValue or opt2.Default or range[1]) or range[1]
 			local sl = tab:AddSlider(opt2.Name, function(v)
+				v = tonumber(v) or defVal
+				-- En movil el slider manda floats: redondear al incremento
+				if inc >= 1 then v = math.floor(v + 0.5) end
+				v = math.clamp(v, range[1], range[2])
 				pcall(opt2.Callback, v)
-			end, { min = range[1], max = range[2] })
+			end, { min = range[1], max = range[2], default = defVal })
+			-- Aplicar valor inicial por si la lib no lo hace
+			pcall(opt2.Callback, math.clamp(defVal, range[1], range[2]))
 			return sl
 		end
 		function T:CreateButton(opt2)
@@ -66,9 +74,16 @@ function Rayfield:CreateWindow(_config)
 			if opt2.Description then
 				label.Text = tostring(opt2.Name or "") .. "\n" .. tostring(opt2.Description)
 			end
+			pcall(function()
+				label.TextTruncate = Enum.TextTruncate.AtEnd
+				label.TextXAlignment = Enum.TextXAlignment.Left
+			end)
 			return {
 				Set = function(_, t)
 					label.Text = tostring(t)
+					pcall(function()
+						label.Size = UDim2.new(1, -10, 0, 20)
+					end)
 				end,
 			}
 		end
@@ -132,6 +147,9 @@ end
 -- ============ FAST PUNCH ============
 local fastPunch = false
 local fastPunchGen = 0
+-- Anti-crash: cuando el Boss esta peleando, FastPunch baja el ritmo
+-- para no duplicar remotes + PivotTo + camara al mismo tiempo.
+local bossFightActive = false
 
 local function getPunchTool()
 	local c = LocalPlayer.Character
@@ -246,35 +264,47 @@ local function setFastPunch(on)
 	task.spawn(function()
 		local lastActivate = 0
 		while fastPunch and fastPunchGen == gen do
-			local me = LocalPlayer:FindFirstChild("muscleEvent")
-			local t = getPunchTool()
-			if me and me:IsA("RemoteEvent") then
-				pcall(function() me:FireServer("punch", "rightHand") end)
-				pcall(function() me:FireServer("punch", "leftHand") end)
-			end
-			if t and time() - lastActivate >= 0.12 then
-				lastActivate = time()
-				pcall(function() t:Activate() end)
-				playPunchVisual()
-			end
-			if selectedRock and type(firetouchinterest) == "function" then
-				local c = LocalPlayer.Character
-				local lh = c and c:FindFirstChild("LeftHand")
-				local rh = c and c:FindFirstChild("RightHand")
-				local rock = findRock(selectedRock)
-				if rock and lh and rh then
-					pcall(function() firetouchinterest(rock, rh, 0) end)
-					pcall(function() firetouchinterest(rock, rh, 1) end)
-					pcall(function() firetouchinterest(rock, lh, 0) end)
-					pcall(function() firetouchinterest(rock, lh, 1) end)
+			-- Si el Boss esta activo, NO spamear: el loop del Boss ya pega.
+			-- Solo mantener attackTime en 0 y el tool equipado, a ritmo lento.
+			if bossFightActive then
+				local tBoss = getPunchTool()
+				if tBoss then
+					local atB = tBoss:FindFirstChild("attackTime")
+					if atB and atB.Value ~= 0 then pcall(function() atB.Value = 0 end) end
 				end
+				task.wait(0.5)
+			else
+				local me = LocalPlayer:FindFirstChild("muscleEvent")
+				local t = getPunchTool()
+				if me and me:IsA("RemoteEvent") then
+					pcall(function() me:FireServer("punch", "rightHand") end)
+					pcall(function() me:FireServer("punch", "leftHand") end)
+				end
+				if t and time() - lastActivate >= 0.25 then
+					lastActivate = time()
+					pcall(function() t:Activate() end)
+					playPunchVisual()
+				end
+				if selectedRock and type(firetouchinterest) == "function" then
+					local c = LocalPlayer.Character
+					local lh = c and c:FindFirstChild("LeftHand")
+					local rh = c and c:FindFirstChild("RightHand")
+					local rock = findRock(selectedRock)
+					if rock and lh and rh then
+						pcall(function() firetouchinterest(rock, rh, 0) end)
+						pcall(function() firetouchinterest(rock, rh, 1) end)
+						pcall(function() firetouchinterest(rock, lh, 0) end)
+						pcall(function() firetouchinterest(rock, lh, 1) end)
+					end
+				end
+				task.wait(0.05)
 			end
-			task.wait(0.01)
 		end
 	end)
 end
 
-MainTab:CreateToggle({
+local fastPunchToggle = nil
+fastPunchToggle = MainTab:CreateToggle({
 	Name = "Fast Punch",
 	CurrentValue = false,
 	Flag = "FastPunch",
@@ -372,15 +402,21 @@ FarmTab:CreateToggle({
 
 -- ============ SUPER FAST REP ============
 local superRepOn = false
-local superRepBatch = 3
+local isMobileDevice = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local superRepBatch = isMobileDevice and 2 or 3
 local superRepInterval = 0.02
 FarmTab:CreateSlider({
 	Name = "Super Rep Batch",
-	Range = {1, 10},
+	Range = isMobileDevice and {1, 5} or {1, 10},
 	Increment = 1,
-	CurrentValue = 3,
+	CurrentValue = superRepBatch,
 	Flag = "SuperRepBatch",
-	Callback = function(v) superRepBatch = v end
+	Callback = function(v)
+		v = math.floor((tonumber(v) or superRepBatch) + 0.5)
+		-- En movil capar a 5: mas de eso laguea/crashea el celu
+		local cap = isMobileDevice and 5 or 10
+		superRepBatch = math.clamp(v, 1, cap)
+	end
 })
 FarmTab:CreateToggle({
 	Name = "Super Fast Rep",
@@ -3154,9 +3190,26 @@ local Boss = {
 
 local bossThread = nil
 local bossAntiLagOn = false
+local bossStableCamOn = false
 local bossStatusLabel = nil
 local bossHealthLabel = nil
 local bossToggle = nil
+-- Si el Boss encendio Fast Punch solo, lo apagamos al salir
+local bossAutoPunch = false
+
+local function bossEnsurePunch()
+	if fastPunch == true then return end
+	bossAutoPunch = true
+	setFastPunch(true)
+	if fastPunchToggle then pcall(function() fastPunchToggle:Set(true) end) end
+end
+
+local function bossReleasePunch()
+	if not bossAutoPunch then return end
+	bossAutoPunch = false
+	setFastPunch(false)
+	if fastPunchToggle then pcall(function() fastPunchToggle:Set(false) end) end
+end
 
 local function bossHealth()
 	return math.max(0, tonumber(Workspace:GetAttribute("BossHealth")) or 0)
@@ -3201,17 +3254,21 @@ local function readSize()
 	return math.clamp(math.floor(((height and height.Value) or 2) + 0.5), 1, 100)
 end
 
-local function equipPunch()
+local function equipPunch(noYield)
 	local c = LocalPlayer.Character
 	local h = c and c:FindFirstChildOfClass("Humanoid")
 	local bp = LocalPlayer:FindFirstChild("Backpack")
 	local punch = c and c:FindFirstChild("Punch") or (bp and bp:FindFirstChild("Punch"))
 	if punch and h and punch.Parent ~= c then
 		pcall(h.EquipTool, h, punch)
-		RunService.Heartbeat:Wait()
+		if not noYield then
+			RunService.Heartbeat:Wait()
+		end
 	end
 	local at = punch and punch:FindFirstChild("attackTime")
-	if at and at:IsA("ValueBase") then at.Value = 0 end
+	if at and at:IsA("ValueBase") and at.Value ~= 0 then
+		pcall(function() at.Value = 0 end)
+	end
 	return punch
 end
 
@@ -3254,6 +3311,8 @@ function Boss:SetAntiLag(enabled)
 end
 
 function Boss:StartStableCamera()
+	-- Anti-crash: camara estable es opcional. Si esta apagada, no bindear nada.
+	if bossStableCamOn ~= true then return end
 	pcall(RunService.UnbindFromRenderStep, RunService, self.cameraRenderName)
 	local cam = Workspace.CurrentCamera
 	if cam then
@@ -3263,12 +3322,13 @@ function Boss:StartStableCamera()
 			local focus = self.cameraFocusPosition
 			local cur = Workspace.CurrentCamera
 			if not self.engagedBoss or not focus or not cur then return end
+			if cur.CameraType ~= Enum.CameraType.Scriptable then
+				pcall(function() cur.CameraType = Enum.CameraType.Scriptable end)
+			end
 			local desired = CFrame.lookAt(focus + Vector3.new(0, 34, 48), focus + Vector3.new(0, -5, 0))
 			self.cameraStableCFrame = self.cameraStableCFrame
-				and self.cameraStableCFrame:Lerp(desired, math.clamp(delta * 4, 0.04, 0.22)) or desired
-			cur.CameraType = Enum.CameraType.Scriptable
+				and self.cameraStableCFrame:Lerp(desired, math.clamp(delta * 2.5, 0.03, 0.12)) or desired
 			cur.CFrame = self.cameraStableCFrame
-			cur.Focus = CFrame.new(focus)
 		end)
 	end
 end
@@ -3329,11 +3389,8 @@ end
 
 function Boss:BeginBattle(boss)
 	if self.engagedBoss == boss then return true end
-		if not fastPunch then
-			self.status = 'Activa Fast Punch para el boss'
-			self:UpdateUi()
-			return false
-		end
+	-- El Boss activa Fast Punch solo: no pedir activarlo manual
+	bossEnsurePunch()
 	local c, root = self:WaitReady(8)
 	if not c or not root or boss.Parent == nil or Workspace:GetAttribute("BossActive") ~= true then
 		self:RestoreBattle()
@@ -3342,22 +3399,25 @@ function Boss:BeginBattle(boss)
 	self.originalPivot = c:GetPivot()
 	self.originalSize = readSize()
 	self.engagedBoss = boss
+	bossFightActive = true
 	self.confirmedDamage = 0
 	self.attacks = 0
 	self.lastPlayerHealth = nil
 	self.safeAttackPosition = nil
 	self:StartStableCamera()
 	setSize(5)
-	task.wait(0.55)
+	task.wait(0.35)
+	-- Equipar punch UNA vez aqui, no cada frame (eso crasheaba)
+	pcall(function() equipPunch(true) end)
 	local hum = c:FindFirstChildOfClass("Humanoid")
 	self.lastPlayerHealth = hum and hum.Health or nil
-	if fastPunch ~= true then
-		setFastPunch(true)
-	end
+	bossEnsurePunch()
 	return true
 end
 
 function Boss:RestoreBattle()
+	bossFightActive = false
+	bossReleasePunch()
 	local c = LocalPlayer.Character
 	local root = c and c:FindFirstChild("HumanoidRootPart")
 	if c and root and self.originalPivot then
@@ -3432,27 +3492,50 @@ end
 
 function Boss:Fight(boss)
 	if not self:BeginBattle(boss) then return end
+	bossFightActive = true
 	local lastHealth = bossHealth()
 	local lastAttack = 0
+	local lastUi = 0
+	local lastBossRefresh = 0
+	local lastEquipCheck = 0
+	-- Cachear partes del boss: FindFirstChild(true) cada frame crasheaba
+	local _, cachedPart, cachedTarget = findBoss()
+	local cachedPunch = equipPunch(true)
 	while self.active and boss.Parent and Workspace:GetAttribute("BossActive") == true do
-		if not fastPunch then
-			self.status = 'Punch desactivado'
-			self:UpdateUi()
-			break
+		-- El Boss pega por su cuenta: no depende del toggle manual de Fast Punch
+		if fastPunch ~= true then bossEnsurePunch() end
+		local now = os.clock()
+		-- Refrescar referencia del boss 2 veces por segundo, no 25
+		if now - lastBossRefresh >= 0.5 then
+			lastBossRefresh = now
+			local curBoss, part, target = findBoss()
+			if curBoss ~= boss or not part or not target then break end
+			if part:IsA("BasePart") and part.Parent then
+				cachedPart, cachedTarget = part, target
+			end
 		end
-		local curBoss, part, target = findBoss()
-		if curBoss ~= boss or not part or not target then break end
+		local part, target = cachedPart, cachedTarget
+		if not part or not part.Parent or not target or not target.Parent then break end
 		local c = LocalPlayer.Character
 		local root = c and c:FindFirstChild("HumanoidRootPart")
 		local hum = c and c:FindFirstChildOfClass("Humanoid")
-		local punch = equipPunch()
+		-- Checar punch 1 vez por segundo, no cada frame
+		if now - lastEquipCheck >= 1 then
+			lastEquipCheck = now
+			cachedPunch = equipPunch(true)
+		end
+		local punch = (c and c:FindFirstChild("Punch")) or cachedPunch
 		if not c or not root or not hum or hum.Health <= 0 or not punch then
 			self.status = "Esperando personaje"
-			self:UpdateUi()
+			if now - lastUi >= 0.5 then
+				lastUi = now
+				self:UpdateUi()
+			end
 			task.wait(0.25)
 		else
 			if self.lastPlayerHealth and hum.Health < self.lastPlayerHealth then
 				self.active = false
+				bossFightActive = false
 				self.status = "Proteccion activada (recibiste dano)"
 				self:SetAntiLag(false)
 				if bossToggle then pcall(function() bossToggle:Set(false) end) end
@@ -3460,36 +3543,68 @@ function Boss:Fight(boss)
 				break
 			end
 			self.lastPlayerHealth = hum.Health
-			local bossTop = target.Position.Y + target.Size.Y * 0.5
-			local clearance = math.max(6, root.Size.Y * 0.5 + 4)
-			local desiredPos = Vector3.new(part.Position.X, bossTop + clearance, part.Position.Z)
+			-- Posiciones con validacion anti-NaN (un NaN = crash instantaneo)
+			local okPos, bossTop, desiredPos, aimPos = pcall(function()
+				local top = target.Position.Y + target.Size.Y * 0.5
+				local clearance = math.max(6, root.Size.Y * 0.5 + 4)
+				local dPos = Vector3.new(part.Position.X, top + clearance, part.Position.Z)
+				local aPos = target.Position + Vector3.new(0, target.Size.Y * 0.32, 0)
+				return top, dPos, aPos
+			end)
+			if not okPos or not desiredPos then
+				task.wait(0.15)
+				continue
+			end
+			if desiredPos.X ~= desiredPos.X or desiredPos.Y ~= desiredPos.Y or desiredPos.Z ~= desiredPos.Z then
+				task.wait(0.15)
+				continue
+			end
 			if not self.safeAttackPosition or (desiredPos - self.safeAttackPosition).Magnitude > 45 then
 				self.safeAttackPosition = desiredPos
 			else
-				self.safeAttackPosition = self.safeAttackPosition:Lerp(desiredPos, 0.16)
+				self.safeAttackPosition = self.safeAttackPosition:Lerp(desiredPos, 0.12)
 			end
 			local attackPos = self.safeAttackPosition
-			local aimPos = target.Position + Vector3.new(0, target.Size.Y * 0.32, 0)
-			self.cameraFocusPosition = self.cameraFocusPosition
-				and self.cameraFocusPosition:Lerp(aimPos, 0.08) or aimPos
-			c:PivotTo(CFrame.lookAt(attackPos, aimPos))
-			root.AssemblyLinearVelocity = Vector3.zero
-			root.AssemblyAngularVelocity = Vector3.zero
-			local now = os.clock()
+			local aimPos2 = aimPos
+			if bossStableCamOn then
+				self.cameraFocusPosition = self.cameraFocusPosition
+					and self.cameraFocusPosition:Lerp(aimPos2, 0.08) or aimPos2
+			end
+			-- Solo teletransportar si estas lejos: PivotTo cada 0.04s saturaba fisicas
+			local dist = (root.Position - attackPos).Magnitude
+			if dist > 3 then
+				pcall(function()
+					c:PivotTo(CFrame.lookAt(attackPos, aimPos2))
+					root.AssemblyLinearVelocity = Vector3.zero
+					root.AssemblyAngularVelocity = Vector3.zero
+				end)
+			else
+				-- Cerca: solo mirar al boss, sin mover fisicas
+				pcall(function()
+					root.CFrame = CFrame.lookAt(root.Position, aimPos2)
+					root.AssemblyLinearVelocity = Vector3.zero
+					root.AssemblyAngularVelocity = Vector3.zero
+				end)
+			end
 			if now - lastAttack >= self.hitInterval then
 				lastAttack = now
-				pcall(punch.Deactivate, punch)
+				-- Solo Activate (Deactivate+Activate duplicaba remotes y crasheaba)
 				pcall(punch.Activate, punch)
 				self.attacks = self.attacks + 1
 			end
 			local h = bossHealth()
 			if h < lastHealth then self.confirmedDamage = self.confirmedDamage + lastHealth - h end
 			lastHealth = h
-			self.status = tostring(Workspace:GetAttribute("BossDisplayName") or "Boss") .. " - dano " .. tostring(math.floor(self.confirmedDamage))
-			self:UpdateUi()
-			task.wait(0.04)
+			-- UI a 2Hz, no a 25Hz (el label a 25Hz lagueaba hasta crashear)
+			if now - lastUi >= 0.5 then
+				lastUi = now
+				self.status = tostring(Workspace:GetAttribute("BossDisplayName") or "Boss") .. " - dano " .. tostring(math.floor(self.confirmedDamage))
+				self:UpdateUi()
+			end
+			task.wait(0.12)
 		end
 	end
+	bossFightActive = false
 	local defeated = Workspace:GetAttribute("BossActive") ~= true or bossHealth() <= 0
 	if defeated and self.active then
 		self.status = "Boss derrotado - reclamando recompensa"
@@ -3512,6 +3627,8 @@ function Boss:Set(enabled)
 		self:UpdateUi()
 		return true
 	end
+	-- Boss ON => Fast Punch ON solo, sin tocar nada mas
+	bossEnsurePunch()
 	local shared = ReplicatedStorage:FindFirstChild("shared")
 	local cfg = shared and shared:FindFirstChild("config")
 	local bossCfg = cfg and cfg:FindFirstChild("BossEventConfig")
@@ -3541,9 +3658,10 @@ function Boss:Set(enabled)
 				Boss:Fight(boss)
 			else
 				Boss.engagedBoss = nil
+				bossFightActive = false
 				Boss.status = "Sin boss activo"
 				Boss:UpdateUi()
-				task.wait(0.4)
+				task.wait(1)
 			end
 		end
 		if Boss.generation == gen then Boss:RestoreBattle() end
@@ -3552,7 +3670,7 @@ function Boss:Set(enabled)
 	return true
 end
 
-FarmTab:CreateDivider({text="Boss Hit"})
+FarmTab:CreateDivider({text="Boss (Young0x)"})
 bossStatusLabel = FarmTab:CreateText({Name="Estado: Sin boss activo"})
 bossHealthLabel = FarmTab:CreateText({Name="Vida: --"})
 bossToggle = FarmTab:CreateToggle({
@@ -3575,6 +3693,20 @@ FarmTab:CreateToggle({
 		bossAntiLagOn = v
 		Boss:SetAntiLag(v and Boss.active)
 		Window:Notify({Title="La momoneta Hub", Content=v and "Boss Anti-Lag ON" or "Boss Anti-Lag OFF", Duration=2})
+	end
+})
+FarmTab:CreateToggle({
+	Name = "Boss Camara Fija (puede crashear)",
+	CurrentValue = false,
+	Flag = "BossStableCam",
+	Callback = function(v)
+		bossStableCamOn = v
+		if not v then
+			Boss:StopStableCamera()
+		elseif Boss.active and Boss.engagedBoss then
+			Boss:StartStableCamera()
+		end
+		Window:Notify({Title="La momoneta Hub", Content=v and "Camara fija ON" or "Camara fija OFF", Duration=2})
 	end
 })
 
@@ -4192,3 +4324,4 @@ end
 MiscTab:CreateToggle({ Name="Quitar Portal AD", CurrentValue=false, Flag="RemovePortal", Callback=function(v) setRemovePortal(v) end })
 
 Window:Notify({Title="La momoneta Hub", Content="Loaded", Duration=4})
+

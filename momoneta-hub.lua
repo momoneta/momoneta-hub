@@ -1,7 +1,7 @@
 -- ============ UI: Elerium v2 (estilo Silence, adaptador Rayfield) ============
 local GUI_LIB_URL = "https://raw.githubusercontent.com/momoneta/momoneta-hub/refs/heads/main/mome.lua"
 -- PEGA AQUI TU LINK raw DE GitHub CUANDO SUBAS elerium-momoneta.luau
-local library = loadstring(game:HttpGet(GUI_LIB_URL, true))()
+local library = loadstring(game:HttpGet(GUI_LIB_URL true))()
 local _eleriumWindow = library:AddWindow("La momoneta Hub", {
 	main_color = Color3.fromRGB(0, 0, 139),
 	min_size = Vector2.new(500, 620),
